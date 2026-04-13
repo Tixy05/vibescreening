@@ -595,356 +595,391 @@ class CharacteristicFactors:
     template_num_states: int = 0
 
 
-def build_template_automaton(
-    dfa: DFA,
-    initial_states: set[TaggedSubset],
-) -> tuple[
-    set[TaggedSubset],
-    dict[TaggedSubset, dict[str, TaggedSubset]],
-    set[TaggedSubset],
-    set[TaggedSubset],
-]:
-    """Tagged-subset BFS (Algorithm 1).
+@dataclass
+class TemplateAutomaton:
+    """Tagged-subset automaton from Algorithm 1 for a minimized DFA."""
 
-    Returns (states, adj, full_subset_states, has_initial_flag_states).
-    ``adj`` maps each source state to {symbol: destination}.
-    The language of each (initial, final-set) combination is the *reverse* of
-    the corresponding shortest characteristic factor set.
-    """
-    n = dfa.num_states
-    all_states_set = set(range(n))
-    useless = dfa.useless_states()
-    q0 = dfa.initial
+    dfa: DFA
+    states: set[TaggedSubset] = field(init=False)
+    adj: dict[TaggedSubset, dict[str, TaggedSubset]] = field(init=False)
+    full_subset: set[TaggedSubset] = field(init=False)
+    has_initial: set[TaggedSubset] = field(init=False)
+    q_hat_u: TaggedSubset = field(init=False)
+    q_hat_nf: TaggedSubset = field(init=False)
+    q_hat_f: TaggedSubset = field(init=False)
 
-    # Precompute reverse-transition: for each (target, symbol) -> list of sources
-    rev: dict[tuple[int, str], list[int]] = {}
-    for q in range(n):
-        for a in dfa.alphabet:
-            t = dfa.transitions[q][a]
-            rev.setdefault((t, a), []).append(q)
+    def __post_init__(self) -> None:
+        self.q_hat_u, self.q_hat_nf, self.q_hat_f = self._make_initial_states()
+        self.states, self.adj, self.full_subset, self.has_initial = self._build()
 
-    states: set[TaggedSubset] = set()
-    adj: dict[TaggedSubset, dict[str, TaggedSubset]] = {}
-    full_subset: set[TaggedSubset] = set()   # Q_hat_Q: dom = Q, >= 1 True
-    has_initial: set[TaggedSubset] = set()   # Q_hat_0: dom != Q, (q0,True) in S
+    @classmethod
+    def from_dfa(cls, dfa: DFA) -> TemplateAutomaton:
+        """Construct the template automaton directly from a DFA."""
+        return cls(dfa)
 
-    queue: deque[TaggedSubset] = deque()
-    for s0 in initial_states:
-        states.add(s0)
-        if any(flag for _, flag in s0):
-            queue.append(s0)
+    @property
+    def num_states(self) -> int:
+        return len(self.states)
 
-    while queue:
-        q_hat = queue.popleft()
-        q_hat_dict = dict(q_hat)
-        q_hat_keys = set(q_hat_dict)
+    @property
+    def named_initials(self) -> dict[str, TaggedSubset]:
+        named: dict[str, TaggedSubset] = {}
+        if self.q_hat_u:
+            named["q_hat_U"] = self.q_hat_u
+        if self.q_hat_nf:
+            named["q_hat_nf"] = self.q_hat_nf
+        if self.q_hat_f:
+            named["q_hat_f"] = self.q_hat_f
+        return named
 
-        # Full-subset check (Q_hat_Q): dom(S) = Q
-        if q_hat_keys == all_states_set:
-            full_subset.add(q_hat)
-            # Full-subset states have no outgoing transitions (shortest cutoff)
-            continue
+    def _make_initial_states(self) -> tuple[TaggedSubset, TaggedSubset, TaggedSubset]:
+        """Compute the three initial tagged subsets from the source DFA."""
+        useless = self.dfa.useless_states()
+        finals = self.dfa.accepting
+        useful_non_final = set(range(self.dfa.num_states)) - finals - useless
 
-        # Non-full check (Q_hat_0): dom(S) != Q and (q0, True) in S
-        if q_hat_dict.get(q0, False):
-            has_initial.add(q_hat)
+        q_hat_u = frozenset((q, True) for q in useless)
+        q_hat_nf = frozenset(
+            [(q, True) for q in useful_non_final]
+            + [(q, False) for q in useless]
+        )
+        q_hat_f = frozenset(
+            [(q, True) for q in finals]
+            + [(q, False) for q in useless]
+        )
+        return q_hat_u, q_hat_nf, q_hat_f
 
-        edges: dict[str, TaggedSubset] = {}
-        for a in dfa.alphabet:
-            items: list[tuple[int, bool]] = []
-            for target_q, flag in q_hat_dict.items():
-                for src in rev.get((target_q, a), []):
-                    new_flag = flag and (src not in useless)
-                    items.append((src, new_flag))
+    def _initial_states(self) -> set[TaggedSubset]:
+        return set(self.named_initials.values())
 
-            # Deduplicate: if a source appears multiple times (via different
-            # targets), the flag is True if ANY path gives True.
-            merged: dict[int, bool] = {}
-            for src, flag in items:
-                merged[src] = merged.get(src, False) or flag
+    def _build(
+        self,
+    ) -> tuple[
+        set[TaggedSubset],
+        dict[TaggedSubset, dict[str, TaggedSubset]],
+        set[TaggedSubset],
+        set[TaggedSubset],
+    ]:
+        """Run the tagged-subset BFS from Algorithm 1."""
+        n = self.dfa.num_states
+        all_states_set = set(range(n))
+        useless = self.dfa.useless_states()
+        q0 = self.dfa.initial
 
-            if not any(merged.values()):
+        rev: dict[tuple[int, str], list[int]] = {}
+        for q in range(n):
+            for a in self.dfa.alphabet:
+                t = self.dfa.transitions[q][a]
+                rev.setdefault((t, a), []).append(q)
+
+        states: set[TaggedSubset] = set()
+        adj: dict[TaggedSubset, dict[str, TaggedSubset]] = {}
+        full_subset: set[TaggedSubset] = set()
+        has_initial: set[TaggedSubset] = set()
+
+        queue: deque[TaggedSubset] = deque()
+        for s0 in self._initial_states():
+            states.add(s0)
+            if any(flag for _, flag in s0):
+                queue.append(s0)
+
+        while queue:
+            q_hat = queue.popleft()
+            q_hat_dict = dict(q_hat)
+            q_hat_keys = set(q_hat_dict)
+
+            if q_hat_keys == all_states_set:
+                full_subset.add(q_hat)
                 continue
 
-            q_hat_prime = frozenset(merged.items())
-            edges[a] = q_hat_prime
+            if q_hat_dict.get(q0, False):
+                has_initial.add(q_hat)
 
-            if q_hat_prime not in states:
-                states.add(q_hat_prime)
-                queue.append(q_hat_prime)
+            edges: dict[str, TaggedSubset] = {}
+            for a in self.dfa.alphabet:
+                items: list[tuple[int, bool]] = []
+                for target_q, flag in q_hat_dict.items():
+                    for src in rev.get((target_q, a), []):
+                        new_flag = flag and (src not in useless)
+                        items.append((src, new_flag))
 
-        if edges:
-            adj[q_hat] = edges
+                merged: dict[int, bool] = {}
+                for src, flag in items:
+                    merged[src] = merged.get(src, False) or flag
 
-    return states, adj, full_subset, has_initial
+                if not any(merged.values()):
+                    continue
+
+                q_hat_prime = frozenset(merged.items())
+                edges[a] = q_hat_prime
+
+                if q_hat_prime not in states:
+                    states.add(q_hat_prime)
+                    queue.append(q_hat_prime)
+
+            if edges:
+                adj[q_hat] = edges
+
+        return states, adj, full_subset, has_initial
+
+    def _extract_words(
+        self,
+        initial: TaggedSubset,
+        final_states: set[TaggedSubset],
+        max_depth: int | None = None,
+    ) -> set[str]:
+        """Enumerate accepted words and reverse them back to factors."""
+        if not initial:
+            return set()
+
+        results: set[str] = set()
+
+        def dfs(state: TaggedSubset, path: list[str], depth: int) -> None:
+            if state in final_states:
+                results.add("".join(reversed(path)))
+                return
+            if max_depth is not None and depth >= max_depth:
+                return
+            for sym, dst in self.adj.get(state, {}).items():
+                path.append(sym)
+                dfs(dst, path, depth + 1)
+                path.pop()
+
+        dfs(initial, [], 0)
+        return results
+
+    def extract_characteristic_factors(
+        self,
+        max_depth: int | None = None,
+    ) -> CharacteristicFactors:
+        """Extract all six shortest characteristic factor sets."""
+        config: dict[str, tuple[TaggedSubset, set[TaggedSubset]]] = {
+            "SFF": (self.q_hat_u, self.full_subset),
+            "SFP": (self.q_hat_u, self.has_initial),
+            "SFS": (self.q_hat_nf, self.full_subset),
+            "SFW": (self.q_hat_nf, self.has_initial),
+            "SAS": (self.q_hat_f, self.full_subset),
+            "SAW": (self.q_hat_f, self.has_initial),
+        }
+
+        results: dict[str, set[str]] = {}
+        for name, (initial, finals) in config.items():
+            results[name] = self._extract_words(initial, finals, max_depth)
+
+        return CharacteristicFactors(
+            **results,
+            template_num_states=self.num_states,
+        )
+
+    def _empty_language_dfa(self) -> DFA:
+        return DFA(
+            num_states=1,
+            alphabet=list(self.dfa.alphabet),
+            transitions={0: {a: 0 for a in self.dfa.alphabet}},
+            initial=0,
+            accepting=set(),
+        )
+
+    def to_dfa(
+        self,
+        initial: TaggedSubset,
+        terminal_states: set[TaggedSubset],
+    ) -> DFA:
+        """Convert one shortest-language projection of the template automaton to a DFA."""
+        if not initial or initial not in self.states:
+            return self._empty_language_dfa()
+
+        state_list = sorted(self.states, key=lambda s: sorted(s))
+        ts_to_id = {ts: i for i, ts in enumerate(state_list)}
+        sink = len(state_list)
+
+        transitions: dict[int, dict[str, int]] = {}
+        accepting: set[int] = set()
+
+        for ts, sid in ts_to_id.items():
+            if ts in terminal_states:
+                accepting.add(sid)
+                transitions[sid] = {a: sink for a in self.dfa.alphabet}
+                continue
+
+            edges = self.adj.get(ts, {})
+            transitions[sid] = {
+                a: ts_to_id[edges[a]] if a in edges else sink
+                for a in self.dfa.alphabet
+            }
+
+        transitions[sink] = {a: sink for a in self.dfa.alphabet}
+
+        return DFA(
+            num_states=len(state_list) + 1,
+            alphabet=list(self.dfa.alphabet),
+            transitions=transitions,
+            initial=ts_to_id[initial],
+            accepting=accepting,
+        )
+
+    def to_sff_dfa(self) -> DFA:
+        return self.to_dfa(self.q_hat_u, self.full_subset)
+
+    def to_sfp_dfa(self) -> DFA:
+        return self.to_dfa(self.q_hat_u, self.has_initial)
+
+    def to_sfs_dfa(self) -> DFA:
+        return self.to_dfa(self.q_hat_nf, self.full_subset)
+
+    def to_sfw_dfa(self) -> DFA:
+        return self.to_dfa(self.q_hat_nf, self.has_initial)
+
+    def to_sas_dfa(self) -> DFA:
+        return self.to_dfa(self.q_hat_f, self.full_subset)
+
+    def to_saw_dfa(self) -> DFA:
+        return self.to_dfa(self.q_hat_f, self.has_initial)
+
+    def to_dot(self) -> str:
+        """Return a paper-style Graphviz DOT representation of the template automaton."""
+        state_list = sorted(self.states, key=_template_state_sort_key)
+        ts_to_id: dict[TaggedSubset, int] = {ts: i for i, ts in enumerate(state_list)}
+        by_rank: dict[int, list[TaggedSubset]] = {}
+        for ts in state_list:
+            by_rank.setdefault(_positive_count(ts), []).append(ts)
+
+        lines: list[str] = [
+            "digraph TemplateAutomaton {",
+            "    rankdir=LR;",
+            "    splines=true;",
+            "    outputorder=edgesfirst;",
+            "    nodesep=0.55;",
+            "    ranksep=0.75;",
+            '    graph [fontname="Times-Italic"];',
+            '    node [shape=circle, fontname="Times-Roman", fontsize=18, width=0.62, height=0.62, fixedsize=false];',
+            '    edge [fontname="Times-Italic", fontsize=16, arrowsize=0.8];',
+            "",
+        ]
+
+        rank_keys = sorted(by_rank)
+        for idx, rank in enumerate(rank_keys):
+            anchor = f"_rank_{rank}"
+            lines.append(f'    {anchor} [shape=point, width=0, label="", style=invis];')
+            if idx:
+                prev_anchor = f"_rank_{rank_keys[idx - 1]}"
+                lines.append(f"    {prev_anchor} -> {anchor} [style=invis, weight=100];")
+        lines.append("")
+
+        for name, ts in self.named_initials.items():
+            if ts in ts_to_id:
+                sid = ts_to_id[ts]
+                family_a, family_b = _INIT_FAMILY_LABELS[name]
+                label_name = f"_label_{sid}"
+                label_html = (
+                    '<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2">'
+                    f'<TR><TD>{family_a}</TD></TR>'
+                    f'<TR><TD><FONT COLOR="gray45">{family_b}</FONT></TD></TR>'
+                    "</TABLE>>"
+                )
+                lines.append(
+                    f"    {label_name} [shape=plain, margin=0, label={label_html}];"
+                )
+                lines.append(
+                    f'    {label_name} -> {sid} [color=black, penwidth=1.1, minlen=1];'
+                )
+        lines.append("")
+
+        for rank, states_in_rank in sorted(by_rank.items()):
+            members = "; ".join([f"_rank_{rank}"] + [str(ts_to_id[ts]) for ts in states_in_rank])
+            lines.append(f"    {{ rank=same; {members}; }}")
+        lines.append("")
+
+        for ts, sid in ts_to_id.items():
+            label = _dot_label_for_tagged_subset(ts)
+            if ts in self.full_subset:
+                attrs = f"label={label}, peripheries=2, penwidth=1.2"
+            elif ts in self.has_initial:
+                attrs = f'label={label}, peripheries=2, style=dashed, penwidth=1.2'
+            else:
+                attrs = f"label={label}"
+            lines.append(f"    {sid} [{attrs}];")
+
+        lines.append("")
+
+        for ts, sid in ts_to_id.items():
+            edges = self.adj.get(ts, {})
+            target_syms: dict[int, list[str]] = {}
+            for a in self.dfa.alphabet:
+                if a in edges:
+                    tid = ts_to_id[edges[a]]
+                    target_syms.setdefault(tid, []).append(a)
+            for idx, (tid, syms) in enumerate(sorted(target_syms.items())):
+                lbl = ",".join(syms)
+                esc = lbl.replace("\\", "\\\\").replace('"', '\\"')
+                col = _TEMPLATE_EDGE_COLORS[idx % len(_TEMPLATE_EDGE_COLORS)]
+                lines.append(
+                    f'    {sid} -> {tid} [label="{esc}", color="{col}", fontcolor="{col}", penwidth=1.0];'
+                )
+
+        lines.append("}")
+        return "\n".join(lines)
+
+    def to_svg(self, path: str | Path) -> None:
+        """Render the template automaton to an SVG file using Graphviz ``dot``."""
+        dot_src = self.to_dot()
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".dot", delete=False,
+        ) as tmp:
+            tmp.write(dot_src)
+            tmp_path = tmp.name
+
+        try:
+            subprocess.run(
+                ["dot", "-Tsvg", "-o", str(path), tmp_path],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Graphviz `dot` not found. Install it with:\n"
+                "  Ubuntu/Debian : sudo apt install graphviz\n"
+                "  macOS (brew)  : brew install graphviz\n"
+                "  pip           : pip install graphviz  (Python wrapper only)"
+            ) from None
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
-def make_initial_states(
-    dfa: DFA,
-) -> tuple[TaggedSubset, TaggedSubset, TaggedSubset]:
-    """Compute the three initial tagged subsets.
+def _positive_count(ts: TaggedSubset) -> int:
+    return sum(1 for _, flag in ts if flag)
 
-    Returns (q_hat_U, q_hat_nf, q_hat_f).
-    """
-    useless = dfa.useless_states()
-    finals = dfa.accepting
-    useful_non_final = set(range(dfa.num_states)) - finals - useless
 
-    q_hat_u = frozenset((q, True) for q in useless)
-    q_hat_nf = frozenset(
-        [(q, True) for q in useful_non_final]
-        + [(q, False) for q in useless]
+def _template_state_sort_key(ts: TaggedSubset) -> tuple[int, int, list[tuple[int, bool]]]:
+    return (_positive_count(ts), len(ts), sorted(ts))
+
+
+def _dot_label_for_tagged_subset(ts: TaggedSubset) -> str:
+    positive = [str(q) for q, flag in sorted(ts) if flag]
+    negative = [str(q) for q, flag in sorted(ts) if not flag]
+    main = "u" if not positive else f"u[{','.join(positive)}]"
+    if not negative:
+        return f'"{main}"'
+    negative_line = ",".join(f"{q}-" for q in negative)
+    return (
+        '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">'
+        f'<TR><TD>{main}</TD></TR>'
+        f'<TR><TD><FONT COLOR="gray55" POINT-SIZE="11">{negative_line}</FONT></TD></TR>'
+        "</TABLE>>"
     )
-    q_hat_f = frozenset(
-        [(q, True) for q in finals]
-        + [(q, False) for q in useless]
-    )
-    return q_hat_u, q_hat_nf, q_hat_f
 
 
-def _extract_words(
-    initial: TaggedSubset,
-    final_states: set[TaggedSubset],
-    adj: dict[TaggedSubset, dict[str, TaggedSubset]],
-    max_depth: int | None = None,
-) -> set[str]:
-    """DFS enumeration of all accepted strings, then reverse each one.
-
-    The template automaton's language is the *reverse* of the characteristic
-    factors, so we reverse each path label to get the actual factor.
-    """
-    results: set[str] = set()
-
-    def dfs(state: TaggedSubset, path: list[str], depth: int) -> None:
-        if state in final_states:
-            results.add("".join(reversed(path)))
-            return
-        if max_depth is not None and depth >= max_depth:
-            return
-        for sym, dst in adj.get(state, {}).items():
-            path.append(sym)
-            dfs(dst, path, depth + 1)
-            path.pop()
-
-    dfs(initial, [], 0)
-    return results
-
-
-def _format_tagged_subset(ts: TaggedSubset) -> str:
-    """Human-readable label for a tagged subset: {q⁺, q⁻, ...}."""
-    parts = []
-    for q, flag in sorted(ts):
-        parts.append(f"{q}{'⁺' if flag else '⁻'}")
-    return "{" + ",".join(parts) + "}"
-
-
-_INIT_STYLES: dict[str, tuple[str, str]] = {
-    "q̂_U":  ("#fff3cd", "gold3"),
-    "q̂_nf": ("#f8d7da", "firebrick"),
-    "q̂_f":  ("#e2d9f3", "purple"),
+_INIT_FAMILY_LABELS: dict[str, tuple[str, str]] = {
+    "q_hat_U": ("SFF", "SFP"),
+    "q_hat_nf": ("SFS", "SFW"),
+    "q_hat_f": ("SAS", "SAW"),
 }
 
-
-def template_automaton_to_dot(
-    states: set[TaggedSubset],
-    adj: dict[TaggedSubset, dict[str, TaggedSubset]],
-    named_initials: dict[str, TaggedSubset],
-    full_subset: set[TaggedSubset],
-    has_initial: set[TaggedSubset],
-    alphabet: list[str],
-) -> str:
-    """Return a Graphviz DOT representation of the template automaton.
-
-    *named_initials* maps a human-readable name to each initial tagged
-    subset, e.g. ``{"q̂_U": q_hat_u, "q̂_nf": q_hat_nf}``.
-
-    Node shapes / colors:
-      - q̂_U  initial: yellow fill, gold border   (SFF, SFP)
-      - q̂_nf initial: pink fill, red border      (SFS, SFW)
-      - q̂_f  initial: lavender fill, purple border
-      - full_subset (Q̂_Q) terminal: double octagon, light blue
-      - has_initial (Q̂_0) terminal: double circle, light green
-      - ordinary states: plain circle
-    Superscript ⁺/⁻ on each DFA-state id indicates the boolean tag.
-    """
-    state_list = sorted(states, key=lambda s: sorted(s))
-    ts_to_id: dict[TaggedSubset, int] = {ts: i for i, ts in enumerate(state_list)}
-
-    initial_set = set(named_initials.values())
-    ts_to_init_name: dict[TaggedSubset, str] = {
-        ts: name for name, ts in named_initials.items()
-    }
-
-    edge_colors = ("black", "darkred", "darkgreen", "darkblue", "darkorange")
-
-    lines: list[str] = [
-        "digraph TemplateAutomaton {",
-        "    rankdir=LR;",
-        '    node [fontname="Courier", fontsize=9];',
-        '    edge [fontname="Courier", fontsize=10];',
-        "",
-    ]
-
-    for name, ts in named_initials.items():
-        if ts in ts_to_id:
-            sid = ts_to_id[ts]
-            _, border_col = _INIT_STYLES.get(name, ("#eeeeee", "black"))
-            lines.append(
-                f'    _start_{sid} [shape=point, width=0.15, '
-                f'color={border_col}];'
-            )
-            lines.append(
-                f'    _start_{sid} -> {sid} [color={border_col}];'
-            )
-    lines.append("")
-
-    for ts, sid in ts_to_id.items():
-        label = _format_tagged_subset(ts)
-        esc_label = label.replace("\\", "\\\\").replace('"', '\\"')
-
-        if ts in full_subset:
-            attrs = (
-                f'shape=doubleoctagon, label="{esc_label}", '
-                f'style=filled, fillcolor="#cce5ff"'
-            )
-        elif ts in has_initial:
-            attrs = (
-                f'shape=doublecircle, label="{esc_label}", '
-                f'style=filled, fillcolor="#d4edda"'
-            )
-        elif ts in initial_set:
-            name = ts_to_init_name[ts]
-            fill, border = _INIT_STYLES.get(name, ("#eeeeee", "black"))
-            attrs = (
-                f'shape=circle, label="{name}\\n{esc_label}", '
-                f'style="filled,bold", fillcolor="{fill}", '
-                f'color="{border}", penwidth=2'
-            )
-        else:
-            attrs = f'shape=circle, label="{esc_label}"'
-        lines.append(f"    {sid} [{attrs}];")
-
-    lines.append("")
-
-    for ts, sid in ts_to_id.items():
-        edges = adj.get(ts, {})
-        target_syms: dict[int, list[str]] = {}
-        for a in alphabet:
-            if a in edges:
-                tid = ts_to_id[edges[a]]
-                target_syms.setdefault(tid, []).append(a)
-        for idx, (tid, syms) in enumerate(sorted(target_syms.items())):
-            lbl = ",".join(syms)
-            esc = lbl.replace("\\", "\\\\").replace('"', '\\"')
-            col = edge_colors[idx % len(edge_colors)]
-            lines.append(
-                f'    {sid} -> {tid} [label="{esc}", color={col}, fontcolor={col}];'
-            )
-
-    lines.append("}")
-    return "\n".join(lines)
-
-
-def template_automaton_to_svg(
-    states: set[TaggedSubset],
-    adj: dict[TaggedSubset, dict[str, TaggedSubset]],
-    named_initials: dict[str, TaggedSubset],
-    full_subset: set[TaggedSubset],
-    has_initial: set[TaggedSubset],
-    alphabet: list[str],
-    path: str | Path,
-) -> None:
-    """Render the template automaton to SVG via Graphviz ``dot``."""
-    dot_src = template_automaton_to_dot(
-        states, adj, named_initials, full_subset, has_initial, alphabet,
-    )
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".dot", delete=False,
-    ) as tmp:
-        tmp.write(dot_src)
-        tmp_path = tmp.name
-
-    try:
-        subprocess.run(
-            ["dot", "-Tsvg", "-o", str(path), tmp_path],
-            check=True, capture_output=True, text=True,
-        )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "Graphviz `dot` not found. Install it with:\n"
-            "  Ubuntu/Debian : sudo apt install graphviz\n"
-            "  macOS (brew)  : brew install graphviz\n"
-            "  pip           : pip install graphviz  (Python wrapper only)"
-        ) from None
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-
-def template_automaton_to_dfa(
-    states: set[TaggedSubset],
-    adj: dict[TaggedSubset, dict[str, TaggedSubset]],
-    initial_states: set[TaggedSubset],
-    full_subset: set[TaggedSubset],
-    has_initial: set[TaggedSubset],
-    alphabet: list[str],
-) -> DFA:
-    """Convert the template automaton (tagged-subset BFS) into a plain DFA.
-
-    Uses a virtual initial state with epsilon-transitions to all actual
-    initial states (unioned into a single start via BFS renumbering).
-    Accepting = full_subset | has_initial (both terminal families).
-    """
-    state_list = sorted(states, key=lambda s: sorted(s))
-    ts_to_id: dict[TaggedSubset, int] = {}
-    for i, ts in enumerate(state_list):
-        ts_to_id[ts] = i
-
-    n = len(state_list)
-    sink = n
-    virtual_init = n + 1
-    total = n + 2
-
-    transitions: dict[int, dict[str, int]] = {}
-    accepting: set[int] = set()
-
-    for ts, sid in ts_to_id.items():
-        row: dict[str, int] = {}
-        edges = adj.get(ts, {})
-        for a in alphabet:
-            row[a] = ts_to_id[edges[a]] if a in edges else sink
-        transitions[sid] = row
-        if ts in full_subset or ts in has_initial:
-            accepting.add(sid)
-
-    transitions[sink] = {a: sink for a in alphabet}
-
-    init_targets = [ts_to_id[s] for s in initial_states if s in ts_to_id]
-    if len(init_targets) == 1:
-        actual_initial = init_targets[0]
-        total -= 1
-    else:
-        actual_initial = virtual_init
-        row = {}
-        for a in alphabet:
-            reachable: set[int] = set()
-            for t in init_targets:
-                reachable.add(transitions[t].get(a, sink))
-            row[a] = next(iter(reachable)) if len(reachable) == 1 else sink
-        transitions[virtual_init] = row
-        if any(t in accepting for t in init_targets):
-            accepting.add(virtual_init)
-
-    return DFA(
-        num_states=total,
-        alphabet=alphabet,
-        transitions=transitions,
-        initial=actual_initial,
-        accepting=accepting,
-    )
-
+_TEMPLATE_EDGE_COLORS = ("gray60", "black", "gray35", "gray75", "gray45")
 
 def extract_characteristic_factors(
     dfa: DFA,
@@ -960,37 +995,8 @@ def extract_characteristic_factors(
     number of states in the intermediate template automaton (tagged-subset
     construction) — the potential source of exponential blowup.
     """
-    q_hat_u, q_hat_nf, q_hat_f = make_initial_states(dfa)
-
-    inits: set[TaggedSubset] = set()
-    if q_hat_u:
-        inits.add(q_hat_u)
-    if q_hat_nf:
-        inits.add(q_hat_nf)
-    if q_hat_f:
-        inits.add(q_hat_f)
-
-    ta_states, adj, full_subset, has_initial = build_template_automaton(
-        dfa, inits,
-    )
-
-    config: dict[str, tuple[TaggedSubset, set[TaggedSubset]]] = {
-        "SFF": (q_hat_u, full_subset),
-        "SFP": (q_hat_u, has_initial),
-        "SFS": (q_hat_nf, full_subset),
-        "SFW": (q_hat_nf, has_initial),
-        "SAS": (q_hat_f, full_subset),
-        "SAW": (q_hat_f, has_initial),
-    }
-
-    results: dict[str, set[str]] = {}
-    for name, (init, finals) in config.items():
-        if not init:
-            results[name] = set()
-        else:
-            results[name] = _extract_words(init, finals, adj, max_depth)
-
-    return CharacteristicFactors(**results, template_num_states=len(ta_states))
+    template = TemplateAutomaton.from_dfa(dfa)
+    return template.extract_characteristic_factors(max_depth=max_depth)
 
 
 # ======================================================================

@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass, field
-import itertools
 from typing import Iterable
 
 from antidict import (
-    DFA,
+    TemplateAutomaton,
     build_ead_dfa,
-    build_template_automaton,
     extract_characteristic_factors,
-    make_initial_states,
-    template_automaton_to_svg,
 )
 
 
@@ -62,7 +57,7 @@ class ExtAD:
 
         Normalization pipeline:
           1. build_ead_dfa(P, F, S) → minimize → DFA_min
-          2. build_template_automaton on DFA_min → template automaton (TA)
+          2. TemplateAutomaton(DFA_min) → template automaton (TA)
           3. extract characteristic factors from TA
 
         The template automaton (tagged-subset construction) is the real
@@ -90,22 +85,12 @@ class ExtAD:
             dfa_min.to_svg("dfa_min.svg")
             print("SVG written: dfa_min.svg")
 
-            q_hat_u, q_hat_nf, q_hat_f = make_initial_states(dfa_min)
-            named = {}
-            if q_hat_u:
-                named["q̂_U"] = q_hat_u
-            if q_hat_nf:
-                named["q̂_nf"] = q_hat_nf
-            if q_hat_f:
-                named["q̂_f"] = q_hat_f
-            ta_states, adj, full_sub, has_init = build_template_automaton(
-                dfa_min, set(named.values()),
-            )
-            template_automaton_to_svg(
-                ta_states, adj, named, full_sub, has_init,
-                dfa_min.alphabet, "template_automaton.svg",
-            )
-            print("SVG written: template_automaton.svg")
+            template = TemplateAutomaton.from_dfa(dfa_min)
+            try:
+                template.to_svg("template_automaton.svg")
+                print("SVG written: template_automaton.svg")
+            except NotImplementedError as exc:
+                print(f"Skipping template automaton SVG: {exc}")
 
         return states_ta, states_min
 
