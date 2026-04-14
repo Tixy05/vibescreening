@@ -17,6 +17,10 @@ from collections import deque
 from dataclasses import dataclass, field
 from itertools import product as iterproduct
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extad import ExtAD, SLTL
 
 
 # ======================================================================
@@ -547,21 +551,18 @@ def _build_product(
 # ======================================================================
 
 def build_ead_dfa(
-    prefixes: set[str],
-    factors: set[str],
-    suffixes: set[str],
-    alphabet: set[str],
+    ead: "ExtAD",
 ) -> DFA:
     """Build a complete DFA accepting the language defined by the EAD.
 
     Returns a DFA A such that L(A) = { w in Sigma* | w has no prefix in P,
     no factor in F, no suffix in S }.
     """
-    alpha_list = sorted(alphabet)
+    alpha_list = sorted(ead.alphabet)
 
     # Step 1: Aho-Corasick over F ∪ S
     ac = _AhoCorasick(alpha_list)
-    ac.build(factors, suffixes)
+    ac.build(ead.factors, ead.suffixes)
 
     # Step 2: mark states
     has_factor, has_suffix = _mark_states(ac)
@@ -570,10 +571,105 @@ def build_ead_dfa(
     ac_dead = _apply_dead_state(ac, has_factor)
 
     # Step 4: prefix DFA
-    pdfa = _PrefixDFA(prefixes, alpha_list)
+    pdfa = _PrefixDFA(ead.prefixes, alpha_list)
 
     # Steps 4c + 5 + 6: product construction with accepting states
     return _build_product(ac.goto, ac_dead, has_suffix, pdfa, alpha_list)
+
+
+def _build_finite_word_dfa(words: set[str], alphabet: list[str]) -> DFA:
+    """Build a DFA accepting exactly the finite set ``words``."""
+    trie: list[dict[str, int]] = [{}]
+    accepting: set[int] = set()
+
+    for word in words:
+        state = 0
+        for ch in word:
+            nxt = trie[state].get(ch)
+            if nxt is None:
+                nxt = len(trie)
+                trie[state][ch] = nxt
+                trie.append({})
+            state = nxt
+        accepting.add(state)
+
+    dead_state = len(trie)
+    transitions: dict[int, dict[str, int]] = {}
+    for state, row_map in enumerate(trie):
+        row: dict[str, int] = {}
+        for ch in alphabet:
+            row[ch] = row_map.get(ch, dead_state)
+        transitions[state] = row
+    transitions[dead_state] = {ch: dead_state for ch in alphabet}
+
+    return DFA(
+        num_states=len(trie) + 1,
+        alphabet=list(alphabet),
+        transitions=transitions,
+        initial=0,
+        accepting=accepting,
+    )
+
+
+def _subtract_finite_language(base: DFA, forbidden: DFA) -> DFA:
+    """Return ``L(base) \\ L(forbidden)`` for complete DFAs on the same alphabet."""
+    if base.alphabet != forbidden.alphabet:
+        raise ValueError("Both DFAs must use the same alphabet.")
+
+    start = (base.initial, forbidden.initial)
+    pair_to_id: dict[tuple[int, int], int] = {start: 0}
+    id_to_pair: list[tuple[int, int]] = [start]
+    queue: deque[int] = deque([0])
+    transitions: dict[int, dict[str, int]] = {}
+    accepting: set[int] = set()
+
+    while queue:
+        sid = queue.popleft()
+        left, right = id_to_pair[sid]
+
+        if left in base.accepting and right not in forbidden.accepting:
+            accepting.add(sid)
+
+        row: dict[str, int] = {}
+        for ch in base.alphabet:
+            nxt = (base.transitions[left][ch], forbidden.transitions[right][ch])
+            nid = pair_to_id.get(nxt)
+            if nid is None:
+                nid = len(id_to_pair)
+                pair_to_id[nxt] = nid
+                id_to_pair.append(nxt)
+                queue.append(nid)
+            row[ch] = nid
+        transitions[sid] = row
+
+    return DFA(
+        num_states=len(id_to_pair),
+        alphabet=list(base.alphabet),
+        transitions=transitions,
+        initial=0,
+        accepting=accepting,
+    )
+
+
+def build_sltl_dfa(
+    sltl: "SLTL",
+) -> DFA:
+    """Build a DFA from the full forbidden-side SLTL characteristic factors."""
+    from extad import ExtAD
+
+    ead = ExtAD(
+        sltl.prefixes,
+        sltl.factors,
+        sltl.suffixes,
+        dense_alphabet=sltl.dense_alphabet,
+        alphabet=sltl.alphabet,
+    )
+    dfa = build_ead_dfa(ead)
+    if not sltl.sfw:
+        return dfa
+
+    forbidden_words = _build_finite_word_dfa(set(sltl.sfw), sorted(sltl.alphabet))
+    return _subtract_finite_language(dfa, forbidden_words)
 
 
 # ======================================================================
@@ -872,16 +968,20 @@ class TemplateAutomaton:
                 family_a, family_b = _INIT_FAMILY_LABELS[name]
                 label_name = f"_label_{sid}"
                 label_html = (
-                    '<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2">'
-                    f'<TR><TD>{family_a}</TD></TR>'
-                    f'<TR><TD><FONT COLOR="gray45">{family_b}</FONT></TD></TR>'
+                    '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="0">'
+                    '<TR><TD>'
+                    f'<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="1" CELLPADDING="4"><TR><TD>{family_a}</TD></TR></TABLE>'
+                    '</TD></TR>'
+                    '<TR><TD>'
+                    f'<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="1" CELLPADDING="4" STYLE="dashed"><TR><TD>{family_b}</TD></TR></TABLE>'
+                    '</TD></TR>'
                     "</TABLE>>"
                 )
                 lines.append(
                     f"    {label_name} [shape=plain, margin=0, label={label_html}];"
                 )
                 lines.append(
-                    f'    {label_name} -> {sid} [color=black, penwidth=1.1, minlen=1];'
+                    f'    {label_name} -> {sid} [color=black, fontcolor=black, penwidth=1.1, minlen=1];'
                 )
         lines.append("")
 
@@ -912,9 +1012,8 @@ class TemplateAutomaton:
             for idx, (tid, syms) in enumerate(sorted(target_syms.items())):
                 lbl = ",".join(syms)
                 esc = lbl.replace("\\", "\\\\").replace('"', '\\"')
-                col = _TEMPLATE_EDGE_COLORS[idx % len(_TEMPLATE_EDGE_COLORS)]
                 lines.append(
-                    f'    {sid} -> {tid} [label="{esc}", color="{col}", fontcolor="{col}", penwidth=1.0];'
+                    f'    {sid} -> {tid} [label="{esc}", color="black", fontcolor="black", penwidth=1.0];'
                 )
 
         lines.append("}")
@@ -979,8 +1078,6 @@ _INIT_FAMILY_LABELS: dict[str, tuple[str, str]] = {
     "q_hat_f": ("SAS", "SAW"),
 }
 
-_TEMPLATE_EDGE_COLORS = ("gray60", "black", "gray35", "gray75", "gray45")
-
 def extract_characteristic_factors(
     dfa: DFA,
     max_depth: int | None = None,
@@ -1005,20 +1102,18 @@ def extract_characteristic_factors(
 
 def _brute_accepts(
     w: str,
-    prefixes: set[str],
-    factors: set[str],
-    suffixes: set[str],
+    ead: "ExtAD",
 ) -> bool:
     """Set-theoretic definition: True iff w has no forbidden prefix/factor/suffix."""
-    for p in prefixes:
+    for p in ead.prefixes:
         if w[: len(p)] == p:
             return False
-    for f in factors:
+    for f in ead.factors:
         if f and f in w:
             return False
         if not f:
             return False
-    for s in suffixes:
+    for s in ead.suffixes:
         if w[len(w) - len(s):] == s:
             return False
     return True
@@ -1039,18 +1134,15 @@ def _enumerate_strings(alphabet: list[str], max_len: int):
 
 
 def verify(
-    prefixes: set[str],
-    factors: set[str],
-    suffixes: set[str],
-    alphabet: set[str],
+    ead: "ExtAD",
     max_len: int = 8,
 ) -> bool:
-    dfa = build_ead_dfa(prefixes, factors, suffixes, alphabet)
+    dfa = build_ead_dfa(ead)
     mini = dfa.minimize()
-    alpha_list = sorted(alphabet)
+    alpha_list = sorted(ead.alphabet)
     ok = True
     for w in _enumerate_strings(alpha_list, max_len):
-        expected = _brute_accepts(w, prefixes, factors, suffixes)
+        expected = _brute_accepts(w, ead)
         got = _dfa_accepts(dfa, w)
         got_min = _dfa_accepts(mini, w)
         if expected != got:
@@ -1234,51 +1326,38 @@ def _dfa_isomorphic(a: DFA, b: DFA) -> bool:
 # ======================================================================
 
 if __name__ == "__main__":
-    cases: list[tuple[str, set[str], set[str], set[str], set[str]]] = [
-        ("empty EAD", set(), set(), set(), {"a", "b"}),
-        ("factors only", set(), {"ab", "ba"}, set(), {"a", "b"}),
-        ("prefixes only", {"ab", "ba"}, set(), set(), {"a", "b"}),
-        ("suffixes only", set(), set(), {"ab", "ba"}, {"a", "b"}),
+    from extad import ExtAD
+
+    cases: list[tuple[str, ExtAD]] = [
+        ("empty EAD", ExtAD(set(), set(), set(), alphabet={"a", "b"})),
+        ("factors only", ExtAD(set(), {"ab", "ba"}, set(), alphabet={"a", "b"})),
+        ("prefixes only", ExtAD({"ab", "ba"}, set(), set(), alphabet={"a", "b"})),
+        ("suffixes only", ExtAD(set(), set(), {"ab", "ba"}, alphabet={"a", "b"})),
         (
             "mixed P+F+S",
-            {"aa"},
-            {"bb"},
-            {"ab"},
-            {"a", "b"},
+            ExtAD({"aa"}, {"bb"}, {"ab"}, alphabet={"a", "b"}),
         ),
         (
             "ternary mixed",
-            {"ab"},
-            {"cc"},
-            {"ba"},
-            {"a", "b", "c"},
+            ExtAD({"ab"}, {"cc"}, {"ba"}, alphabet={"a", "b", "c"}),
         ),
-        ("single-char factor", set(), {"a"}, set(), {"a", "b"}),
-        ("single-char prefix", {"a"}, set(), set(), {"a", "b"}),
-        ("single-char suffix", set(), set(), {"a"}, {"a", "b"}),
-        ("pattern in both F and S", set(), {"ab"}, {"ab"}, {"a", "b"}),
-        ("prefix is also factor", {"ab"}, {"ab"}, set(), {"a", "b"}),
+        ("single-char factor", ExtAD(set(), {"a"}, set(), alphabet={"a", "b"})),
+        ("single-char prefix", ExtAD({"a"}, set(), set(), alphabet={"a", "b"})),
+        ("single-char suffix", ExtAD(set(), set(), {"a"}, alphabet={"a", "b"})),
+        ("pattern in both F and S", ExtAD(set(), {"ab"}, {"ab"}, alphabet={"a", "b"})),
+        ("prefix is also factor", ExtAD({"ab"}, {"ab"}, set(), alphabet={"a", "b"})),
         (
             "overlapping patterns",
-            {"ab"},
-            {"ba"},
-            {"aa"},
-            {"a", "b"},
+            ExtAD({"ab"}, {"ba"}, {"aa"}, alphabet={"a", "b"}),
         ),
         (
             "long patterns",
-            {"aab"},
-            {"bab"},
-            {"abb"},
-            {"a", "b"},
+            ExtAD({"aab"}, {"bab"}, {"abb"}, alphabet={"a", "b"}),
         ),
-        ("all singletons forbidden", {"a", "b"}, set(), set(), {"a", "b"}),
+        ("all singletons forbidden", ExtAD({"a", "b"}, set(), set(), alphabet={"a", "b"})),
         (
             "nested prefixes",
-            {"a", "ab", "abc"},
-            set(),
-            set(),
-            {"a", "b", "c"},
+            ExtAD({"a", "ab", "abc"}, set(), set(), alphabet={"a", "b", "c"}),
         ),
     ]
 
@@ -1287,9 +1366,12 @@ if __name__ == "__main__":
     print("EAD DFA construction tests")
     print("=" * 60)
     all_ok = True
-    for name, tp, tf, ts, ta in cases:
-        print(f"Test: {name}  P={tp} F={tf} S={ts} A={sorted(ta)}")
-        ok = verify(tp, tf, ts, ta, max_len=7)
+    for name, ead in cases:
+        print(
+            f"Test: {name}  P={ead.prefixes} F={ead.factors} "
+            f"S={ead.suffixes} A={sorted(ead.alphabet)}"
+        )
+        ok = verify(ead, max_len=7)
         if ok:
             print("  OK")
         else:
@@ -1306,8 +1388,8 @@ if __name__ == "__main__":
     print("Characteristic factors extraction tests")
     print("=" * 60)
     cf_ok = True
-    for name, tp, tf, ts, ta in cases:
-        dfa = build_ead_dfa(tp, tf, ts, ta).minimize()
+    for name, ead in cases:
+        dfa = build_ead_dfa(ead).minimize()
         cf = extract_characteristic_factors(dfa)
         print(f"Test: {name}  ({dfa.num_states} states)")
         print(f"  SFF={sorted(cf.SFF)}  SFP={sorted(cf.SFP)}  SFS={sorted(cf.SFS)}")
@@ -1329,10 +1411,11 @@ if __name__ == "__main__":
     print("Round-trip tests (EAD -> extract -> rebuild)")
     print("=" * 60)
     rt_ok = True
-    for name, tp, tf, ts, ta in cases:
-        original = build_ead_dfa(tp, tf, ts, ta).minimize()
+    for name, ead in cases:
+        original = build_ead_dfa(ead).minimize()
         cf = extract_characteristic_factors(original)
-        rebuilt = build_ead_dfa(cf.SFP, cf.SFF, cf.SFS, ta).minimize()
+        rebuilt_ead = ExtAD(cf.SFP, cf.SFF, cf.SFS, alphabet=ead.alphabet)
+        rebuilt = build_ead_dfa(rebuilt_ead).minimize()
 
         iso = _dfa_isomorphic(original, rebuilt)
         status = "OK" if iso else "FAIL"
@@ -1347,11 +1430,14 @@ if __name__ == "__main__":
         print("SOME ROUND-TRIP TESTS FAILED.\n")
 
     # --- Visual demo ---
-    demo_p, demo_f, demo_s, demo_a = {"aa"}, {"bb"}, {"ab"}, {"a", "b"}
-    demo = build_ead_dfa(demo_p, demo_f, demo_s, demo_a)
+    demo_ead = ExtAD({"aa"}, {"bb"}, {"ab"}, alphabet={"a", "b"})
+    demo = build_ead_dfa(demo_ead)
     mini = demo.minimize()
     cf = extract_characteristic_factors(mini)
-    print(f"--- Visual demo  P={demo_p} F={demo_f} S={demo_s} ---")
+    print(
+        f"--- Visual demo  P={demo_ead.prefixes} "
+        f"F={demo_ead.factors} S={demo_ead.suffixes} ---"
+    )
     print(f"  DFA: {demo.num_states} states -> minimized: {mini.num_states} states")
     print(f"  SFF={sorted(cf.SFF)}  SFP={sorted(cf.SFP)}  SFS={sorted(cf.SFS)}")
     print(f"  SFW={sorted(cf.SFW)}  SAS={sorted(cf.SAS)}  SAW={sorted(cf.SAW)}")

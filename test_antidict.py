@@ -10,6 +10,7 @@ from antidict import (
     extract_characteristic_factors,
     verify_characteristic_factors,
 )
+from extad import ExtAD, SLTL
 
 
 Case = tuple[str, set[str], set[str], set[str], set[str]]
@@ -48,11 +49,21 @@ CASES: list[Case] = [
 ]
 
 
+def make_ead(
+    prefixes: set[str],
+    factors: set[str],
+    suffixes: set[str],
+    alphabet: set[str],
+) -> ExtAD:
+    return ExtAD(prefixes, factors, suffixes, alphabet=alphabet)
+
+
 class TemplateAutomatonTests(unittest.TestCase):
     def test_characteristic_factor_extraction_matches_definitions(self) -> None:
         for name, prefixes, factors, suffixes, alphabet in CASES:
             with self.subTest(name=name):
-                dfa = build_ead_dfa(prefixes, factors, suffixes, alphabet).minimize()
+                ead = make_ead(prefixes, factors, suffixes, alphabet)
+                dfa = build_ead_dfa(ead).minimize()
                 template = TemplateAutomaton.from_dfa(dfa)
 
                 via_template = template.extract_characteristic_factors()
@@ -74,7 +85,8 @@ class TemplateAutomatonTests(unittest.TestCase):
 
         for name, prefixes, factors, suffixes, alphabet in CASES:
             with self.subTest(name=name):
-                dfa = build_ead_dfa(prefixes, factors, suffixes, alphabet).minimize()
+                ead = make_ead(prefixes, factors, suffixes, alphabet)
+                dfa = build_ead_dfa(ead).minimize()
                 template = TemplateAutomaton.from_dfa(dfa)
                 cf = template.extract_characteristic_factors()
 
@@ -91,7 +103,7 @@ class TemplateAutomatonTests(unittest.TestCase):
                         self.assertEqual(observed, expected)
 
     def test_dot_and_svg_rendering(self) -> None:
-        dfa = build_ead_dfa({"aa"}, {"bb"}, {"ab"}, {"a", "b"}).minimize()
+        dfa = build_ead_dfa(make_ead({"aa"}, {"bb"}, {"ab"}, {"a", "b"})).minimize()
         template = TemplateAutomaton.from_dfa(dfa)
 
         dot = template.to_dot()
@@ -106,6 +118,31 @@ class TemplateAutomatonTests(unittest.TestCase):
             template.to_svg(svg_path)
             self.assertTrue(svg_path.exists())
             self.assertIn("<svg", svg_path.read_text(encoding="utf-8"))
+
+    def test_extad_alphabet_construction(self) -> None:
+        ead = ExtAD(["ab"], ["bc"], ["ca"])
+        self.assertEqual(ead.alphabet, {"a", "b", "c"})
+
+        sparse = ExtAD(["ab"], [], [], dense_alphabet=False)
+        self.assertEqual(sparse.alphabet, {"a", "b", "c"})
+
+    def test_sltl_alphabet_includes_sfw(self) -> None:
+        sltl = SLTL([], [], [], ["ca"])
+        self.assertEqual(sltl.alphabet, {"a", "c"})
+
+        sparse = SLTL([], [], [], ["ab"], dense_alphabet=False)
+        self.assertEqual(sparse.alphabet, {"a", "b", "c"})
+
+    def test_sltl_rejects_exact_sfw_words(self) -> None:
+        sltl = SLTL([], [], [], ["a"], alphabet={"a", "b"})
+        dfa = sltl.build_dfa()
+
+        self.assertTrue(dfa_accepts(dfa, ""))
+        self.assertFalse(dfa_accepts(dfa, "a"))
+        self.assertTrue(dfa_accepts(dfa, "b"))
+        self.assertTrue(dfa_accepts(dfa, "aa"))
+        self.assertTrue(dfa_accepts(dfa, "ab"))
+        self.assertTrue(dfa_accepts(dfa, "ba"))
 
 
 if __name__ == "__main__":
