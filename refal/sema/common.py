@@ -1,31 +1,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Hashable
 
-@dataclass
+@dataclass(frozen=True)
 class Alternation:
-    alternatives: list[Letter]
+    alternatives: tuple[Letter, ...]
 
     def __str__(self) -> str:
         return "[" + " ".join(str(a) for a in self.alternatives) + "]"
 
 
-@dataclass
+@dataclass(frozen=True)
 class AnyStarred:
     def __str__(self) -> str:
         return ".*"
 
 
-@dataclass
+@dataclass(frozen=True)
 class AnyLetter:
     def __str__(self) -> str:
         return "."
 
 
-@dataclass
+@dataclass(frozen=True)
 class SimpleRegex:
     """Regex that are ( "(a | b | ...)" | ".*" | ".")*"""
-    concats: list[Alternation | AnyStarred | AnyLetter]
+    concats: tuple[Alternation | AnyStarred | AnyLetter]
     alphabet: Alphabet
 
     def __str__(self) -> str:
@@ -44,6 +45,11 @@ class SimpleRegex:
     #             result.append(Alternation(list(self.alphabet.letters)))
     #             result.append(AnyStarred())
     #     return SimpleRegex(result, self.alphabet)
+
+
+@dataclass(frozen=True)
+class Literal:
+    value: Hashable
 
 
 @dataclass(frozen=True)

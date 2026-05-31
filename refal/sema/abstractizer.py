@@ -51,6 +51,9 @@ class AbstractParenthesizedPattern(AbstractPatternElement):
     def __str__(self) -> str:
         return f"({' '.join(str(c) for c in self.children)})"
 
+    def __hash__(self) -> int:
+        return hash(tuple(self.children))
+
 
 @dataclass
 class AbstractPattern:
@@ -73,17 +76,17 @@ class AbstractPattern:
                 case parser.Var(_, kind, name):
                     match kind:
                         case parser.VarKind.E:
-                            if name in seen:
+                            if name in seen[kind]:
                                 raise NotImplementedError(f"No support for repeated vars yet!")
                             seen[kind] |= {name}
                             result.append(AbstractEVar())
                         case parser.VarKind.T:
-                            if name in seen:
+                            if name in seen[kind]:
                                 raise NotImplementedError(f"No support for repeated vars yet!")
                             seen[kind] |= {name}
                             result.append(AbstractTvar())
                         case parser.VarKind.S:
-                            if name in seen:
+                            if name in seen[kind]:
                                 raise NotImplementedError(f"No support for repeated vars yet!")
                             seen[kind] |= {name}
                             result.append(AbstractSvar())
@@ -97,7 +100,11 @@ class AbstractPattern:
 
     @staticmethod
     def from_concrete(node: parser.Pattern) -> AbstractPattern:
-        return AbstractPattern(children=AbstractPattern._from_concrete(node.children, {}))
+        return AbstractPattern(children=AbstractPattern._from_concrete(node.children, {
+            parser.VarKind.E: set(),
+            parser.VarKind.T: set(),
+            parser.VarKind.S: set(),
+        }))
 
 
 def _flat_parens_of_abstract_pattern(
@@ -142,6 +149,36 @@ def rewrite(
     mapping: dict[AbstractPatternElement, AbstractPatternElement],
 ) -> AbstractPattern:
     return AbstractPattern(_rewrite(ap.children, mapping))
+
+
+def replace_at_path(
+    pattern: AbstractPattern,
+    path: tuple[int, ...],
+    replacement: AbstractPatternElement,
+) -> AbstractPattern:
+    """Replace the node at *path* with *replacement* (or whole pattern if path empty)."""
+    if not path:
+        return AbstractPattern([replacement])
+    children = list(pattern.children)
+    _replace_in_children(children, path, replacement)
+    return AbstractPattern(children)
+
+
+def _replace_in_children(
+    children: list[AbstractPatternElement],
+    path: tuple[int, ...],
+    replacement: AbstractPatternElement,
+) -> None:
+    i, *rest = path
+    if not rest:
+        children[i] = replacement
+        return
+    elem = children[i]
+    if not isinstance(elem, AbstractParenthesizedPattern):
+        raise ValueError(f"Invalid path {path}")
+    sub = list(elem.children)
+    _replace_in_children(sub, tuple(rest), replacement)
+    children[i] = AbstractParenthesizedPattern(sub)
 
 
 if __name__ == "__main__":

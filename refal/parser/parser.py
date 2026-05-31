@@ -37,6 +37,9 @@ class Var(Node):
     def pretty(self, indent: int = 0) -> str:
         return f"{self._p(indent)}{self.kind}.{self.name}"
 
+    def __str__(self) -> str:
+        return f"{self.kind}.{self.name}"
+
 
 @dataclass
 class Symbol(Node):
@@ -47,6 +50,16 @@ class Symbol(Node):
         v = self.value if self.tag == "name" else repr(self.value)
         return f"{self._p(indent)}{v}"
 
+    def __str__(self) -> str:
+        match self.tag:
+            case SymbolTag.NAME:
+                return f"{self.value}"
+            case SymbolTag.NUMBER:
+                return str(self.value)
+            case SymbolTag.QUOTED:
+                return f"'{self.value}'"
+            case SymbolTag.DOUBLE_QUOTED:
+                return f"\"{self.value}\""
 
 @dataclass
 class ParenthesizedPattern(Node):
@@ -58,6 +71,9 @@ class ParenthesizedPattern(Node):
             return f"{p}()"
         inner = "\n".join(c.pretty(indent + 1) for c in self.children)
         return f"{p}(\n{inner}\n{p})"
+
+    def __str__(self) -> str:
+        return f"({' '.join(str(c) for c in self.children)})"
 
 
 @dataclass
@@ -72,6 +88,8 @@ class Call(Node):
         inner = "\n".join(a.pretty(indent + 1) for a in self.args.children)
         return f"{p}<{self.name}\n{inner}\n{p}>"
 
+    def __str__(self) -> str:
+        return f"<{self.name} {' '.join(str(a) for a in self.args.children)}>"
 
 @dataclass
 class ParenthesizedExpression(Node):
@@ -83,6 +101,9 @@ class ParenthesizedExpression(Node):
             return f"{p}()"
         inner = "\n".join(c.pretty(indent + 1) for c in self.children)
         return f"{p}(\n{inner}\n{p})"
+
+    def __str__(self) -> str:
+        return f"({' '.join(str(c) for c in self.children)})"
 
 
 PatternElement: TypeAlias = Var | Symbol | ParenthesizedPattern
@@ -99,6 +120,8 @@ class Pattern(Node):
             return f"{p}(empty)"
         return "\n".join(c.pretty(indent) for c in self.children)
 
+    def __str__(self) -> str:
+        return ' '.join(str(c) for c in self.children)
 
 @dataclass
 class Expression(Node):
@@ -110,6 +133,8 @@ class Expression(Node):
             return f"{p}(empty)"
         return "\n".join(c.pretty(indent) for c in self.children)
 
+    def __str__(self) -> str:
+        return ' '.join(str(c) for c in self.children)
 
 @dataclass
 class Rule(Node):
@@ -125,6 +150,9 @@ class Rule(Node):
         parts.append(self.expression.pretty(indent + 2))
         return "\n".join(parts)
 
+    def __str__(self) -> str:
+        return f"{self.pattern} = {self.expression};"
+
 
 @dataclass
 class Definition(Node):
@@ -136,6 +164,9 @@ class Definition(Node):
         parts.extend(r.pretty(indent + 1) for r in self.rules)
         return "\n".join(parts)
 
+    def __str__(self) -> str:
+        return f"{self.name} {{\n    {'\n    '.join(str(r) for r in self.rules)} \n}}"
+
 
 @dataclass
 class Program(Node):
@@ -145,6 +176,9 @@ class Program(Node):
         parts = [f"{self._p(indent)}Program"]
         parts.extend(d.pretty(indent + 1) for d in self.definitions)
         return "\n".join(parts)
+
+    def __str__(self) -> str:
+        return "\n\n".join(str(d) for d in self.definitions)
 
 
 # ── Parser ───────────────────────────────────────────────────
