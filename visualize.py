@@ -54,3 +54,20 @@ visualize(
     [], infixes, suffixes,
     "visulas/ab_ac",
 )
+
+# ead = ExtAD.from_strings(
+#     [], ["aaab"], ["a"],
+# )
+# dfa = build_ead_dfa(ead).minimize()
+# dfa.to_svg("visulas/BAD_ead_dfa.svg")
+# ta = TemplateAutomaton.from_dfa(dfa)
+# cf = ta.extract_characteristic_factors()
+# # print(cf)
+# ta.to_svg("visulas/BAD_template_automaton.svg")
+# ead = ead.normalize()
+ps = []
+ss = ["s"]
+fs = ["sssb"]
+ead = ExtAD.from_strings(ps, fs, ss)
+ead = ead.normalize()
+print(ead)
