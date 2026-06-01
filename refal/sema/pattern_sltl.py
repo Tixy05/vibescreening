@@ -23,6 +23,7 @@ from .abstractizer import (
 from .common import SimpleRegex
 from .k_subwords import KSubword
 from .regex_dfa import simple_regex_from_subword, simple_regex_to_dfa
+from .trace_log import trace_step
 
 
 class FormKind(enum.StrEnum):
@@ -213,6 +214,7 @@ def anti_sltl_from_form(
             raw = SLTL(prefixes=dense_words, alphabet=dense_alpha)
         case FormKind.P:
             raw = SLTL(sfw=dense_words if dense_words else {""}, alphabet=dense_alpha)
+    trace_step(f"anti form {form.kind}: normalize ({len(dense_words)} word(s))")
     return raw.normalize()
 
 
@@ -288,8 +290,10 @@ def _less_restrictive_sltl(left: SLTL, right: SLTL) -> SLTL:
     """Return the anti-SLTL whose language is larger (less restrictive)."""
     from antidict import sltl_is_subset
 
+    trace_step("less_restrictive_sltl: compare left ⊆ right")
     if sltl_is_subset(left, right):
         return right
+    trace_step("less_restrictive_sltl: compare right ⊆ left")
     if sltl_is_subset(right, left):
         return left
     return right
@@ -304,6 +308,10 @@ def anti_sltl_approximate(
 ) -> SLTL:
     """Approximate anti-SLTL for non-SLTL shapes via ⋂ eAe, eBe, … (§6.2 extension)."""
     split = split_on_top_level_e(ap)
+    trace_step(
+        f"anti approx rule {rule_index}: {len(split.segments)} segment(s), "
+        f"lead={split.has_leading_e} trail={split.has_trailing_e}"
+    )
     dense_alpha = set(dense_map.values())
 
     prefixes: set[str] = set()
@@ -316,24 +324,31 @@ def anti_sltl_approximate(
             sfw = {""}
     else:
         for i in range(len(split.segments)):
+            trace_step(f"anti approx rule {rule_index}: segment {i} shell encode")
             shell = _segment_shell_pattern(split, i)
             encoded = _encode_rule_in_function(shell, peer_patterns, rule_index)
             shell_form = detect_form(shell)
             if shell_form is None:
+                trace_step(f"anti approx rule {rule_index}: segment {i} skip (no form)")
                 continue
             rplus = KSubword(tuple(encoded.children))
             alpha = alphabet_from_pattern(encoded)
+            trace_step(
+                f"anti approx rule {rule_index}: segment {i} anti_sltl_from_form"
+            )
             part = anti_sltl_from_form(
                 shell_form, rplus, alpha, dense_map=dense_map,
             )
             if part is not None:
                 _merge_sltl_fields(prefixes, factors, suffixes, sfw, part)
 
+        trace_step(f"anti approx rule {rule_index}: full pattern encode")
         full_encoded = _encode_rule_in_function(ap, peer_patterns, rule_index)
         full_form = detect_form(ap)
         if full_form is not None:
             rplus = KSubword(tuple(full_encoded.children))
             alpha = alphabet_from_pattern(full_encoded)
+            trace_step(f"anti approx rule {rule_index}: full anti_sltl_from_form")
             part = anti_sltl_from_form(
                 full_form, rplus, alpha, dense_map=dense_map,
             )
@@ -347,6 +362,7 @@ def anti_sltl_approximate(
         sfw=sfw,
         alphabet=dense_alpha,
     )
+    trace_step(f"anti approx rule {rule_index}: final normalize")
     return raw.normalize()
 
 
@@ -363,6 +379,7 @@ def anti_sltl_from_final_pattern(
     if form is None:
         if abstract_ap is None or peer_patterns is None:
             return None
+        trace_step(f"anti rule {rule_index}: approximate (encoded form is None)")
         return anti_sltl_approximate(
             abstract_ap,
             dense_map,
@@ -370,6 +387,7 @@ def anti_sltl_from_final_pattern(
             rule_index=rule_index,
         )
 
+    trace_step(f"anti rule {rule_index}: exact from encoded ({form.kind})")
     exact = anti_sltl_from_form(
         form,
         KSubword(tuple(final_ap.children)),
@@ -382,12 +400,14 @@ def anti_sltl_from_final_pattern(
     if abstract_ap is not None and detect_form(abstract_ap) is None:
         if peer_patterns is None:
             return exact
+        trace_step(f"anti rule {rule_index}: merge with approximate")
         approx = anti_sltl_approximate(
             abstract_ap,
             dense_map,
             peer_patterns=peer_patterns,
             rule_index=rule_index,
         )
+        trace_step(f"anti rule {rule_index}: less_restrictive_sltl")
         return _less_restrictive_sltl(approx, exact)
 
     return exact

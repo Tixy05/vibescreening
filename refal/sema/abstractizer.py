@@ -130,13 +130,18 @@ def has_constants(pattern: parser.Pattern) -> bool:
     return any(isinstance(e, parser.Symbol) for e in _walk_pattern_elements(pattern.children))
 
 
+def _var_identity(var: parser.Var) -> str:
+    return str(var)
+
+
 def has_repeated_vars(pattern: parser.Pattern) -> bool:
     seen: set[str] = set()
     for e in _walk_pattern_elements(pattern.children):
         if isinstance(e, parser.Var):
-            if e.name in seen:
+            key = _var_identity(e)
+            if key in seen:
                 return True
-            seen.add(e.name)
+            seen.add(key)
     return False
 
 

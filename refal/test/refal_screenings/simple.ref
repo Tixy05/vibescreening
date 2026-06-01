@@ -30,8 +30,8 @@ x {
 y {
     (e.x) s.1 = ; /* ^ba$ */
     e.x s.1 s.2 e.y = ; /* aa */
-    e.x t.1 (e.2) e.y = ; /* SCREENING */ /* ab, bb */
-    e.first (e.x) s.1 e.last = ;
+    e.x t.1 (e.2) e.y = ; /* ab, bb */
+    e.first (e.x) s.1 e.last = ; /* SCREENING */
 }
 
 

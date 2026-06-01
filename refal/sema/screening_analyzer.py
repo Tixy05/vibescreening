@@ -33,6 +33,7 @@ from .regex_dfa import (
     terminal_alphabet_for_step,
     union_accepts_all,
 )
+from .trace_log import trace_step
 
 
 @dataclass
@@ -41,6 +42,7 @@ class EncodingStep:
     subwords: list[KSubword]
     bi_classes: list[BiClass]
     patterns: list[AbstractPattern]
+    annotated_dfa_states: int = 0
 
 
 @dataclass
@@ -84,14 +86,25 @@ def encode_patterns(
     steps: list[EncodingStep] = []
     bi_labels: list[str] = []
     step_index = 0
+    trace_step(f"encode {name}: max_paren_depth={max_d}, {len(patterns)} pattern(s)")
 
     for level in range(max_d, -1, -1):
+        trace_step(f"encode {name} level {level}: extract k-subwords")
         subwords, tagged = extract_k_subwords_function(patterns, level)
         if not subwords:
+            trace_step(f"encode {name} level {level}: skip (no subwords)")
             continue
 
         terminals = terminal_alphabet_for_step(step_index, bi_labels)
+        trace_step(
+            f"encode {name} level {level}: build_step_dfa "
+            f"({len(subwords)} subword(s), alphabet size {len(terminals)})"
+        )
         dfa, annotations, classes = build_step_dfa(subwords, terminals)
+        trace_step(
+            f"encode {name} level {level}: DFA done — "
+            f"{dfa.num_states} states, {len(classes)} bi-class(es)"
+        )
         bi_labels = [c.label for c in classes]
 
         if out_dir is not None:
@@ -110,6 +123,7 @@ def encode_patterns(
             ).write_outputs(stem)
             _write_bi_map(stem.with_suffix(".bi_map.txt"), classes, dfa)
 
+        trace_step(f"encode {name} level {level}: apply replacements")
         patterns = _apply_replacements(patterns, level, tagged, classes)
         steps.append(
             EncodingStep(
@@ -117,10 +131,12 @@ def encode_patterns(
                 subwords=subwords,
                 bi_classes=classes,
                 patterns=[AbstractPattern(list(p.children)) for p in patterns],
+                annotated_dfa_states=dfa.num_states,
             )
         )
         step_index += 1
 
+    trace_step(f"encode {name}: cascade finished ({len(steps)} step(s))")
     return EncodingResult(steps=steps, final_patterns=patterns)
 
 

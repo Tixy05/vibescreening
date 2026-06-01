@@ -1,0 +1,55 @@
+f {
+    /* e.1 s.1 e.2 = ;
+    e.x (e.1 s.1 e.2) () () e.y = ;
+    e.x (e.1 s.1 e.2) () (e.3 s.2 e.4) e.y = ;
+    e.x (e.1 s.1 e.2) (e.3 (e.4) e.5) (e.6 (e.7) e.8) e.y = ; */
+
+    e.x () (e.1 (e.2) e.3) () e.y = ;
+    e.x (e.1 (e.2) e.3) (e.4 s.1 e.5) (e.6 s.2 e.7) e.y = ;
+    e.x () (e.1 (e.2) e.3) (e.4 s.1 e.5) = ; 
+    e.x (e.1 (e.2) e.3) (e.4 s.1 e.5) () = ; 
+    e.x (e.1 s.1 e.2) () (e.4 (e.5) e.6) = ;
+    e.x () (e.1 (e.2) e.3) (e.4 s.1 e.5) e.y = ;
+}
+
+
+/*
+a -> ()
+b -> (e.1 (e.2) e.3)
+c -> (s.1)
+d -> (e.1 s.1 s.2 e.2)
+
+a -> ()
+b -> (t.1 t.2 e.3)
+c -> (t.1)
+
+caa, cac, abb, aba, bcc, bcb, abc$, bca$, cab$ -> abc
+
+abb, bca, bcc, cbb, cba, bac, baa, ab$, ba$, cb$, bc$ -> ba, bc, ab
+*/
+
+/* g {
+    e.x () (t.1 t.2 e.3) (t.4 t.5 e.6) e.y = ;
+    e.x (t.1 t.2 e.3) (t.4) () e.y = ;
+    e.x (t.1 t.2 e.3) (t.4) (t.5) e.y = ;
+    e.x (t.1) (t.2 t.3 e.4) (t.5 t.6 e.7) e.y = ;
+    e.x (t.1) (t.2 t.3 e.4) () e.y = ;
+    e.x (t.1 t.2 e.3) () (t.4) e.y = ;
+    e.x (t.1 t.2 e.3) () () e.y = ;
+    e.x () (t.1 t.2 e.3) = ;
+    e.x (t.1 t.2 e.3) () = ;
+    e.x (t.1) (t.5 t.2 e.3) = ;
+    e.x (t.1 t.2 e.3) (t.5) = ;
+
+    e.x (t.1 t.2 e.3) () e.y = ;
+    e.x (t.1 t.2 e.3) (t.5) e.y = ;
+    e.x () (t.1 t.2 e.3) e.y = ;
+} */
+
+h {
+    e.x s.1 s.2 e.y = ;
+    e.x (e.3) s.4 e.y = ;
+    e.x (e.5) = ;
+
+    e.x s.6 (e.7) e.y = ;
+}
