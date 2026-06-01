@@ -53,7 +53,7 @@ def screen_function(function: parser.Definition) -> FunctionScreening:
     dense_map = function_encoding_alphabet(encoding.final_patterns)
     dense_alpha = set(dense_map.values())
     abstract_patterns = [abstractize_relaxed(rule.pattern) for rule in function.rules]
-    L = universe_sltl(dense_alpha)
+    fallthrough = universe_sltl(dense_alpha)
     result = FunctionScreening(name=function.name)
 
     for i, rule in enumerate(function.rules):
@@ -83,12 +83,12 @@ def screen_function(function: parser.Definition) -> FunctionScreening:
             )
             continue
 
-        anti = align_alphabet(anti, L)
+        anti = align_alphabet(anti, fallthrough)
         if i == 0:
             screened = False
         else:
             # Prior fall-through language already covered by this rule's anti-lang.
-            screened = L.is_subset_of(anti)
+            screened = fallthrough.is_subset_of(anti)
         if approximated:
             reason = "screened (approx)" if screened else "reachable (approx)"
         else:
@@ -97,7 +97,7 @@ def screen_function(function: parser.Definition) -> FunctionScreening:
         # Bad patterns may yield SLTL-shaped anti-languages after relaxed
         # abstractization, but they never narrow the accumulated language.
         if defines:
-            L = L.intersect(anti)
+            fallthrough = fallthrough.intersect(anti)
 
         result.rules.append(
             RuleScreening(

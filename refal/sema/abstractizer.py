@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 
 import refal.parser.parser as parser
 from .common import *
+
+
+class PatternKind(enum.StrEnum):
+    GOOD = "good"
+    BAD = "bad"
+
 
 @dataclass(frozen=True)
 class AbstractPatternElement:
@@ -100,11 +107,107 @@ class AbstractPattern:
 
     @staticmethod
     def from_concrete(node: parser.Pattern) -> AbstractPattern:
-        return AbstractPattern(children=AbstractPattern._from_concrete(node.children, {
+        children = AbstractPattern._from_concrete(node.children, {
             parser.VarKind.E: set(),
             parser.VarKind.T: set(),
             parser.VarKind.S: set(),
-        }))
+        })
+        return AbstractPattern(children=_collapse_consecutive_evars(children))
+
+
+def _walk_pattern_elements(
+    elements: list[parser.PatternElement],
+) -> list[parser.PatternElement]:
+    out: list[parser.PatternElement] = []
+    for e in elements:
+        out.append(e)
+        if isinstance(e, parser.ParenthesizedPattern):
+            out.extend(_walk_pattern_elements(e.children))
+    return out
+
+
+def has_constants(pattern: parser.Pattern) -> bool:
+    return any(isinstance(e, parser.Symbol) for e in _walk_pattern_elements(pattern.children))
+
+
+def has_repeated_vars(pattern: parser.Pattern) -> bool:
+    seen: set[str] = set()
+    for e in _walk_pattern_elements(pattern.children):
+        if isinstance(e, parser.Var):
+            if e.name in seen:
+                return True
+            seen.add(e.name)
+    return False
+
+
+def classify_pattern(pattern: parser.Pattern) -> PatternKind:
+    if has_constants(pattern) or has_repeated_vars(pattern):
+        return PatternKind.BAD
+    return PatternKind.GOOD
+
+
+def _abstractize_relaxed_elements(
+    node: list[parser.PatternElement],
+) -> list[AbstractPatternElement]:
+    result: list[AbstractPatternElement] = []
+    for e in node:
+        match e:
+            case parser.Symbol(tag=parser.SymbolTag.NUMBER, value=_):
+                result.append(AbstractSvar())
+            case parser.Symbol(tag=_, value=sym_value):
+                if isinstance(sym_value, str):
+                    result.extend(AbstractSvar() for _ in sym_value)
+                else:
+                    result.append(AbstractSvar())
+            case parser.Var(_, kind, _):
+                match kind:
+                    case parser.VarKind.E:
+                        result.append(AbstractEVar())
+                    case parser.VarKind.T:
+                        result.append(AbstractTvar())
+                    case parser.VarKind.S:
+                        result.append(AbstractSvar())
+            case parser.ParenthesizedPattern(_, children):
+                result.append(
+                    AbstractParenthesizedPattern(
+                        children=_abstractize_relaxed_elements(children)
+                    )
+                )
+    return result
+
+
+def _collapse_consecutive_evars(
+    elements: list[AbstractPatternElement],
+) -> list[AbstractPatternElement]:
+    """Merge runs of top-level e-vars into one (e e e ≡ e)."""
+    result: list[AbstractPatternElement] = []
+    for elem in elements:
+        if isinstance(elem, AbstractParenthesizedPattern):
+            result.append(
+                AbstractParenthesizedPattern(
+                    children=_collapse_consecutive_evars(elem.children),
+                )
+            )
+        elif isinstance(elem, AbstractEVar):
+            if result and isinstance(result[-1], AbstractEVar):
+                continue
+            result.append(elem)
+        else:
+            result.append(elem)
+    return result
+
+
+def abstractize_relaxed(pattern: parser.Pattern) -> AbstractPattern:
+    """Abstractize pattern, allowing constants and repeated variable names."""
+    children = _abstractize_relaxed_elements(pattern.children)
+    return AbstractPattern(children=_collapse_consecutive_evars(children))
+
+
+def abstractize_strict(pattern: parser.Pattern) -> AbstractPattern:
+    """Abstractize a good pattern (no constants, no repeated names)."""
+    if classify_pattern(pattern) != PatternKind.GOOD:
+        raise ValueError("pattern is not strict-good")
+    return abstractize_relaxed(pattern)
 
 
 def _flat_parens_of_abstract_pattern(
@@ -191,10 +294,10 @@ if __name__ == "__main__":
         AbstractParenthesizedPattern(children=[
             AbstractSvar(),
             AbstractedRegexedElement(
-                Alternation(alternatives=[
+                Alternation(alternatives=(
                     Letter(name="a"),
                     Letter(name="b"),
-                ]),
+                )),
             ),
             AbstractEVar(),
         ]),

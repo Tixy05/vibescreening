@@ -99,22 +99,6 @@ def _rplus_to_simple_regex(
     return simple_regex_from_subword(rplus, terminal_letters)
 
 
-def _accepts(dfa, word: str) -> bool:
-    """Accept *word* built from concatenated DFA alphabet symbols (longest match)."""
-    state = dfa.initial
-    i = 0
-    symbols = sorted(dfa.alphabet, key=len, reverse=True)
-    while i < len(word):
-        for sym in symbols:
-            if word.startswith(sym, i):
-                state = dfa.transitions[state][sym]
-                i += len(sym)
-                break
-        else:
-            return False
-    return state in dfa.accepting
-
-
 def rplus_language_words(
     regex: SimpleRegex,
     *,
@@ -229,8 +213,6 @@ def anti_sltl_from_form(
             raw = SLTL(prefixes=dense_words, alphabet=dense_alpha)
         case FormKind.P:
             raw = SLTL(sfw=dense_words if dense_words else {""}, alphabet=dense_alpha)
-        case _:
-            return None
     return raw.normalize()
 
 

@@ -37,7 +37,7 @@ def _print_report(report: ProgramScreeningReport) -> None:
     for fn in report.functions:
         print(f"Function {fn.name}:")
         for rule in fn.rules:
-            flags = []
+            flags: list[str] = []
             if rule.discarded:
                 flags.append("discarded")
             elif rule.good:

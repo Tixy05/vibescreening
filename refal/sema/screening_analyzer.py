@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import refal.parser.parser as parser
 from refal.parser.parser import build_ast_from_string
+
+if TYPE_CHECKING:
+    from antidict import DFA
 
 from .abstractizer import (
     AbstractPattern,
@@ -18,6 +22,7 @@ from .abstractizer import (
 from .annotated_dfa import AnnotatedDFA
 from .k_subwords import (
     KSubword,
+    KSubwordOccurrence,
     extract_k_subwords_function,
     max_paren_depth_pattern,
 )
@@ -54,7 +59,7 @@ def _alternation_for_index(index: int, classes: list[BiClass]) -> AbstractedRege
 def _apply_replacements(
     patterns: list[AbstractPattern],
     level: int,
-    tagged: list,
+    tagged: list[tuple[int, KSubwordOccurrence]],
     classes: list[BiClass],
 ) -> list[AbstractPattern]:
     result = [AbstractPattern(list(p.children)) for p in patterns]
@@ -64,16 +69,17 @@ def _apply_replacements(
     return result
 
 
-def encode_function(
-    function: parser.Definition,
+def encode_patterns(
+    patterns: list[AbstractPattern],
     *,
+    name: str = "_",
     out_dir: Path | None = None,
 ) -> EncodingResult:
-    """Iteratively encode patterns from max nesting depth down to 0."""
-    patterns = [AbstractPattern.from_concrete(rule.pattern) for rule in function.rules]
+    """Iteratively encode abstract patterns from max nesting depth down to 0."""
     if not patterns:
         return EncodingResult(steps=[], final_patterns=[])
 
+    patterns = [AbstractPattern(list(p.children)) for p in patterns]
     max_d = max(max_paren_depth_pattern(p) for p in patterns)
     steps: list[EncodingStep] = []
     bi_labels: list[str] = []
@@ -89,7 +95,7 @@ def encode_function(
         bi_labels = [c.label for c in classes]
 
         if out_dir is not None:
-            stem = out_dir / f"{function.name}_depth{level}"
+            stem = out_dir / f"{name}_depth{level}"
             union_note = None
             if union_accepts_all(dfa):
                 union_note = f"L(union) = ({'|'.join(dfa.alphabet)})*"
@@ -97,7 +103,7 @@ def encode_function(
                 dfa,
                 annotations,
                 depth=level,
-                function_name=function.name,
+                function_name=name,
                 subwords=subwords,
                 bi_classes=classes,
                 union_note=union_note,
@@ -118,7 +124,31 @@ def encode_function(
     return EncodingResult(steps=steps, final_patterns=patterns)
 
 
-def _write_bi_map(path: Path, classes: list[BiClass], dfa) -> None:
+def encode_abstract_pattern(
+    ap: AbstractPattern,
+    *,
+    name: str = "_",
+) -> AbstractPattern:
+    """Encode a single abstract pattern through the cascade."""
+    result = encode_patterns([ap], name=name)
+    if not result.final_patterns:
+        return AbstractPattern([])
+    return result.final_patterns[0]
+
+
+def encode_function(
+    function: parser.Definition,
+    *,
+    out_dir: Path | None = None,
+) -> EncodingResult:
+    """Iteratively encode patterns from max nesting depth down to 0."""
+    from .abstractizer import abstractize_relaxed
+
+    patterns = [abstractize_relaxed(rule.pattern) for rule in function.rules]
+    return encode_patterns(patterns, name=function.name, out_dir=out_dir)
+
+
+def _write_bi_map(path: Path, classes: list[BiClass], dfa: "DFA") -> None:
     lines = [f"{c.label} -> {set(c.indices)}" for c in classes]
     if union_accepts_all(dfa):
         alpha = "|".join(dfa.alphabet)
@@ -137,9 +167,10 @@ def _print_encoding(name: str, result: EncodingResult) -> None:
 
 
 def check_function(function: parser.Definition) -> list[int]:
-    """Phase 1: run encoding; screening violations TBD."""
-    encode_function(function)
-    return []
+    """Return 0-based indices of screened rules in *function*."""
+    from .screening import screen_function
+
+    return screen_function(function).screened_indices
 
 
 _LISTING3 = """\

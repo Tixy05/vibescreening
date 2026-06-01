@@ -132,7 +132,7 @@ class AnnotatedDFA:
         dead_states = {
             s
             for s in range(self.dfa.num_states)
-            if self.dfa._is_dead(s) and s not in self.dfa.accepting
+            if self.dfa.is_dead(s) and s not in self.dfa.accepting
         }
 
         for s in range(self.dfa.num_states):

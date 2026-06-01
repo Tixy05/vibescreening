@@ -16,7 +16,6 @@ from antidict import DFA
 
 from .abstractizer import (
     AbstractEVar,
-    AbstractPatternElement,
     AbstractSvar,
     AbstractTvar,
     AbstractedRegexedElement,

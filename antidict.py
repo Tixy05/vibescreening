@@ -38,7 +38,7 @@ class DFA:
     _EDGE_COLORS = ("black", "darkred", "darkgreen", "darkblue", "darkorange")
     _DEAD_FILL = "#e0c4c4"
 
-    def _is_dead(self, state: int) -> bool:
+    def is_dead(self, state: int) -> bool:
         """True when every transition from *state* is a self-loop (trap)."""
         row = self.transitions.get(state)
         if row is None:
@@ -203,7 +203,7 @@ class DFA:
             "",
         ]
 
-        dead_states = {s for s in range(self.num_states) if self._is_dead(s)}
+        dead_states = {s for s in range(self.num_states) if self.is_dead(s)}
 
         for s in range(self.num_states):
             shape = "doublecircle" if s in self.accepting else "circle"
@@ -1078,6 +1078,123 @@ _INIT_FAMILY_LABELS: dict[str, tuple[str, str]] = {
     "q_hat_f": ("SAS", "SAW"),
 }
 
+_SLTL_TEMPLATE_FAMILIES: dict[str, tuple[str, str]] = {
+    "SFP": ("q_hat_u", "has_initial"),
+    "SFF": ("q_hat_u", "full_subset"),
+    "SFS": ("q_hat_nf", "full_subset"),
+    "SFW": ("q_hat_nf", "has_initial"),
+}
+
+
+def template_accepts_word(
+    template: TemplateAutomaton,
+    word: str,
+    family: str,
+) -> bool:
+    """True iff *word* is accepted by the template projection for *family*.
+
+    Paths follow the same orientation as :meth:`TemplateAutomaton._extract_words`
+    (symbols of *word* are read right-to-left on template edges).
+    """
+    if family not in _SLTL_TEMPLATE_FAMILIES:
+        raise ValueError(f"unknown family {family!r}; expected one of {sorted(_SLTL_TEMPLATE_FAMILIES)}")
+
+    initial_attr, finals_attr = _SLTL_TEMPLATE_FAMILIES[family]
+    initial: TaggedSubset = getattr(template, initial_attr)
+    finals: set[TaggedSubset] = getattr(template, finals_attr)
+
+    if not initial or initial not in template.states:
+        return False
+
+    state = initial
+    for ch in reversed(word):
+        edges = template.adj.get(state)
+        if edges is None or ch not in edges:
+            return False
+        state = edges[ch]
+    return state in finals
+
+
+def intersect_sltl(left: "SLTL", right: "SLTL") -> "SLTL":
+    """Return a normalized SLTL for ``L(left) ∩ L(right)`` (union of forbidden sets)."""
+    from extad import SLTL
+
+    if left.dense_alphabet != right.dense_alphabet:
+        raise ValueError("both SLTLs must use the same dense_alphabet setting")
+
+    alphabet = left.alphabet | right.alphabet
+    merged = SLTL(
+        left.prefixes | right.prefixes,
+        left.factors | right.factors,
+        left.suffixes | right.suffixes,
+        left.sfw | right.sfw,
+        dense_alphabet=left.dense_alphabet,
+        alphabet=alphabet,
+    )
+    return merged.normalize()
+
+
+def sff_subset(sff_sub: set[str], sff_sup: set[str]) -> bool:
+    """SFF clause for ``L(sub) ⊆ L(sup)`` (section 7).
+
+    Each forbidden factor ``f`` of the including language (``sff_sup``) must have
+    some ``f'`` in ``sff_sub`` that occurs as a substring of ``f``.
+    """
+    return all(
+        any(f_prime in f for f_prime in sff_sub)
+        for f in sff_sup
+    )
+
+
+def _pattern_contains_factor(pattern: str, factors: set[str]) -> bool:
+    return any(u and u in pattern for u in factors)
+
+
+def _prefix_covered_by_sub(p: str, sub: "SLTL") -> bool:
+    """``p`` from ``SFP(sup)`` is a forbidden prefix in ``L(sub)``."""
+    return any(p.startswith(p_sub) for p_sub in sub.prefixes) or _pattern_contains_factor(
+        p, sub.factors
+    )
+
+
+def _suffix_covered_by_sub(s: str, sub: "SLTL") -> bool:
+    """``s`` from ``SFS(sup)`` is a forbidden suffix in ``L(sub)``."""
+    return any(s.endswith(s_sub) for s_sub in sub.suffixes) or _pattern_contains_factor(
+        s, sub.factors
+    )
+
+
+def _word_forbidden_in_sltl(word: str, sltl: "SLTL") -> bool:
+    return not _dfa_accepts(sltl.build_dfa(), word)
+
+
+def sltl_is_subset(sub: "SLTL", sup: "SLTL") -> bool:
+    """True iff ``L(sub) ⊆ L(sup)`` for SLTLs in normal form (section 7).
+
+    Equivalently ``L(sup) ⊇ L(sub)``: every shortest forbidden pattern of *sup*
+    is already enforced by *sub*'s prefixes, factors, suffixes, or whole words.
+    """
+    if not sup.alphabet <= sub.alphabet:
+        return False
+
+    for p in sup.prefixes:
+        if not _prefix_covered_by_sub(p, sub):
+            return False
+
+    if not sff_subset(sub.factors, sup.factors):
+        return False
+
+    for s in sup.suffixes:
+        if not _suffix_covered_by_sub(s, sub):
+            return False
+
+    for w in sup.sfw:
+        if not _word_forbidden_in_sltl(w, sub):
+            return False
+
+    return True
+
+
 def extract_characteristic_factors(
     dfa: DFA,
     max_depth: int | None = None,
@@ -1099,6 +1216,24 @@ def extract_characteristic_factors(
 # ======================================================================
 # Brute-force oracle for testing
 # ======================================================================
+
+def _brute_sltl_accepts(w: str, sltl: "SLTL") -> bool:
+    """Set-theoretic SLTL acceptance (Proposition 1 style)."""
+    if w in sltl.sfw:
+        return False
+    for p in sltl.prefixes:
+        if w[: len(p)] == p:
+            return False
+    for f in sltl.factors:
+        if f and f in w:
+            return False
+        if not f:
+            return False
+    for s in sltl.suffixes:
+        if w[len(w) - len(s) :] == s:
+            return False
+    return True
+
 
 def _brute_accepts(
     w: str,

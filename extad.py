@@ -205,3 +205,15 @@ class SLTL(ExtAD):
             dense_alphabet=self.dense_alphabet,
             alphabet=self.alphabet,
         )
+
+    def intersect(self, other: "SLTL") -> "SLTL":
+        """Return ``L(self) ∩ L(other)`` in normalized SLTL form."""
+        from antidict import intersect_sltl
+
+        return intersect_sltl(self, other)
+
+    def is_subset_of(self, other: "SLTL") -> bool:
+        """True iff ``L(self) ⊆ L(other)`` (normal-form SLTLs; section 7 criterion)."""
+        from antidict import sltl_is_subset
+
+        return sltl_is_subset(self, other)
