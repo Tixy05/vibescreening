@@ -1,0 +1,43 @@
+f {
+    = ;
+    e.1 t.2 e.3 = ;
+    e.1 = ;          /* SCREENING */
+}
+
+g {
+    = ;
+    e.1 t.2 e.1 = ;
+    e.1 = ;          /* no screening */
+}
+
+h {
+    e.1 t.1 e.1 = ;
+    s.1 = ;          /* no screening */
+}
+
+w {
+    e.1 t.2 = ;
+    t.1 e.1 = ; /* SCREENING */
+}
+
+
+/* approximation check */
+x {
+    e.x s.1 e.2 = ;
+    t.1 e.2 s.3 e.4 = ; /* SCREENING */
+}
+
+y {
+    (e.x) s.1 = ; /* ^ba$ */
+    e.x s.1 s.2 e.y = ; /* aa */
+    e.x t.1 (e.2) e.y = ; /* SCREENING */ /* ab, bb */
+    e.first (e.x) s.1 e.last = ;
+}
+
+
+/* e-var collapse check */
+z {
+    e.x e.y s.1 = ;
+    t.1 e.x e.y = ;
+    e.x e.y s.1 e.z e.w = ; /* SCREENING */
+}

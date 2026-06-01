@@ -36,10 +36,10 @@ visulas/
 *.pdf
 tmp.md
 
-# Tests (sample programs under refal/test_programs/ are kept)
+# Tests (Refal sample programs under refal/test/ are kept)
 tests/
 test_*.py
-refal/test/
+refal/test_programs/
 
 # OS junk
 .DS_Store
