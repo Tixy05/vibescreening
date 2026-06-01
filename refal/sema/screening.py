@@ -15,10 +15,14 @@ from .pattern_sltl import (
     align_alphabet,
     anti_sltl_from_final_pattern,
     detect_form,
+    format_dense_map,
+    format_sltl_nf,
     function_encoding_alphabet,
+    level0_pattern_logs,
+    trace_level0_patterns,
     universe_sltl,
 )
-from .file_log import DfaLevelStats, FunctionLog, RuleLogEntry
+from .file_log import DfaLevelStats, FunctionLog, Level0PatternLogRow, RuleLogEntry
 from .metrics import sltl_antidict_stats
 from .screening_analyzer import EncodingResult, encode_function
 from .trace_log import trace_step
@@ -67,11 +71,21 @@ def screen_function(
         f"screen {function.name}: encoding done "
         f"({', '.join(f'L{s.level}={s.annotated_dfa_states}' for s in encoding.steps) or 'flat'})"
     )
-    dense_map = function_encoding_alphabet(encoding.final_patterns)
+    dense_map = function_encoding_alphabet(encoding.final_patterns, encoding)
     dense_alpha = set(dense_map.values())
     abstract_patterns = [abstractize_relaxed(rule.pattern) for rule in function.rules]
+    level0_logs = level0_pattern_logs(
+        encoding.final_patterns,
+        dense_map,
+        encoding=encoding,
+        abstract_patterns=abstract_patterns,
+        peer_patterns=abstract_patterns,
+    )
+    trace_level0_patterns(function.name, level0_logs)
     trace_step(f"screen {function.name}: universe_sltl (|Σ|={len(dense_alpha)})")
+    trace_step(f"screen {function.name}: dense map: {format_dense_map(dense_map)}")
     fallthrough = universe_sltl(dense_alpha)
+    trace_step(f"screen {function.name}: L₀ SLTL: {format_sltl_nf(fallthrough)}")
     result = FunctionScreening(name=function.name, encoding=encoding)
     log_entries: list[RuleLogEntry] = []
 
@@ -87,6 +101,7 @@ def screen_function(
         anti = anti_sltl_from_final_pattern(
             encoding.final_patterns[i],
             dense_map,
+            encoding=encoding,
             abstract_ap=abstract_ap,
             peer_patterns=abstract_patterns,
             rule_index=i,
@@ -101,6 +116,7 @@ def screen_function(
                         good=defines,
                         anti=None,
                         fallthrough=sltl_antidict_stats(fallthrough),
+                        fallthrough_sltl_nf=format_sltl_nf(fallthrough),
                     )
                 )
             result.rules.append(
@@ -116,11 +132,8 @@ def screen_function(
             )
             continue
 
-        anti_stats = sltl_antidict_stats(anti)
         trace_step(
-            f"screen {function.name} rule {i}: anti built "
-            f"(P={anti_stats.prefixes} F={anti_stats.factors} "
-            f"S={anti_stats.suffixes} W={anti_stats.sfw})"
+            f"screen {function.name} rule {i}: anti-SLTL: {format_sltl_nf(anti)}"
         )
         trace_step(f"screen {function.name} rule {i}: align_alphabet")
         anti = align_alphabet(anti, fallthrough)
@@ -141,16 +154,19 @@ def screen_function(
         # Bad patterns may yield SLTL-shaped anti-languages after relaxed
         # abstractization, but they never narrow the accumulated language.
         if defines:
-            ft_before = sltl_antidict_stats(fallthrough)
             trace_step(
-                f"screen {function.name} rule {i}: intersect fall-through "
-                f"(before W={ft_before.sfw})"
+                f"screen {function.name} rule {i}: L before ∩: "
+                f"{format_sltl_nf(fallthrough)}"
             )
             fallthrough = fallthrough.intersect(anti)
-            ft_after = sltl_antidict_stats(fallthrough)
             trace_step(
-                f"screen {function.name} rule {i}: intersect done "
-                f"(after W={ft_after.sfw}, total={ft_after.total})"
+                f"screen {function.name} rule {i}: L after ∩ (good): "
+                f"{format_sltl_nf(fallthrough)}"
+            )
+        else:
+            trace_step(
+                f"screen {function.name} rule {i}: L unchanged (bad): "
+                f"{format_sltl_nf(fallthrough)}"
             )
 
         if collect_log:
@@ -160,6 +176,8 @@ def screen_function(
                     good=defines,
                     anti=sltl_antidict_stats(anti),
                     fallthrough=sltl_antidict_stats(fallthrough),
+                    anti_sltl_nf=format_sltl_nf(anti),
+                    fallthrough_sltl_nf=format_sltl_nf(fallthrough),
                 )
             )
 
@@ -182,6 +200,16 @@ def screen_function(
             dfa_by_level=tuple(
                 DfaLevelStats(level=step.level, num_states=step.annotated_dfa_states)
                 for step in encoding.steps
+            ),
+            level0=tuple(
+                Level0PatternLogRow(
+                    index=row.index,
+                    tag=row.tag,
+                    pattern=row.pattern,
+                    regex=row.regex,
+                    sltl_nf=row.sltl_nf,
+                )
+                for row in level0_logs
             ),
             rules=tuple(log_entries),
         )

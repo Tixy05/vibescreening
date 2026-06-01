@@ -20,13 +20,25 @@ class RuleLogEntry:
     good: bool
     anti: SltlAntidictStats | None
     fallthrough: SltlAntidictStats
+    anti_sltl_nf: str = ""
+    fallthrough_sltl_nf: str = ""
 
 
 @dataclass(frozen=True)
 class FunctionLog:
     name: str
     dfa_by_level: tuple[DfaLevelStats, ...]
+    level0: tuple["Level0PatternLogRow", ...]
     rules: tuple[RuleLogEntry, ...]
+
+
+@dataclass(frozen=True)
+class Level0PatternLogRow:
+    index: int
+    tag: str
+    pattern: str
+    regex: str
+    sltl_nf: str
 
 
 def write_function_log(func_dir: Path, data: FunctionLog) -> None:
@@ -41,27 +53,29 @@ def write_function_log(func_dir: Path, data: FunctionLog) -> None:
         lines.append("(no cascade steps)")
 
     lines.append("")
-    lines.append("=== Anti-SLTL antidictionary (per rule) ===")
+    lines.append("=== Level-0 pattern / regex / SLTL ===")
+    if data.level0:
+        for row in data.level0:
+            lines.append(f"rule {row.index} [{row.tag}] pattern: {row.pattern}")
+            lines.append(f"  regex: {row.regex}")
+            lines.append(f"  SLTL: {row.sltl_nf}")
+    else:
+        lines.append("(none)")
+
+    lines.append("")
+    lines.append("=== Anti-SLTL per rule ===")
     for rule in data.rules:
         lines.append(f"rule {rule.index} ({'good' if rule.good else 'bad'}):")
         if rule.anti is None:
-            lines.append("  (not built)")
+            lines.append("  anti: (not built)")
         else:
-            a = rule.anti
-            lines.append(
-                f"  prefixes={a.prefixes} factors={a.factors} "
-                f"suffixes={a.suffixes} sfw={a.sfw} total={a.total}"
-            )
+            lines.append(f"  anti: {rule.anti_sltl_nf}")
 
     lines.append("")
-    lines.append("=== Accumulated fall-through SLTL (after each rule) ===")
+    lines.append("=== Accumulated L (fall-through SLTL after each rule) ===")
     for rule in data.rules:
-        f = rule.fallthrough
-        lines.append(
-            f"after rule {rule.index}: "
-            f"prefixes={f.prefixes} factors={f.factors} "
-            f"suffixes={f.suffixes} sfw={f.sfw} total={f.total}"
-        )
+        lines.append(f"after rule {rule.index}:")
+        lines.append(f"  L: {rule.fallthrough_sltl_nf}")
 
     (func_dir / "analysis.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

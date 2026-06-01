@@ -33,7 +33,11 @@ class BiClass:
 
 
 def terminal_alphabet_for_step(step_index: int, bi_labels: list[str]) -> list[str]:
-    """Γ_k: first step {b,s}, later {s} ∪ {b_i}."""
+    """Γ for cascade step *step_index* (0 = top: ``{b,s}``; below: ``s`` + quotient ``b_i``).
+
+    ``t`` at this step is coded as ``(s|b1|…|bn)`` or with ``b0`` when *bi_labels*
+    contains ``b0`` (empty DFA annotation — no subword index).
+    """
     if step_index == 0:
         return ["b", "s"]
     return ["s", *bi_labels]
@@ -49,6 +53,7 @@ def simple_regex_from_subword(
         if isinstance(elem, AbstractEVar):
             parts.append(AnyStarred())
         elif isinstance(elem, AbstractTvar):
+            # ``t`` = any terminal at this cascade level (``s|b`` or ``s|b1|…|b0``).
             parts.append(t_alt)
         elif isinstance(elem, AbstractSvar):
             if "s" not in terminal_letters:
